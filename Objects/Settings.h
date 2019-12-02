@@ -1,7 +1,8 @@
 #pragma once
 #include <string>
-#include <ImGuiColorTextEdit/TextEditor.h>
-#include <MoonLight/Base/Color.h>
+#include <vector>
+#include <glm/glm.hpp>
+#include "../Options.h"
 
 namespace ed
 {
@@ -20,28 +21,32 @@ namespace ed
 			bool VSync;
 			// std::string Language;	// [TODO] Not implemented
 			bool AutoOpenErrorWindow;
+			bool Toolbar;
 			bool Recovery;				// [TODO] Not implemented
-			bool CheckUpdates;			// [TODO] Not implemented
-			bool SupportGLSL;			// [TODO] Not implemented (forgot what it was supposed to do hahah)
+			bool CheckUpdates;
 			bool RecompileOnFileChange;
+			bool AutoRecompile;
 			bool ReopenShaders;
 			bool UseExternalEditor;
 			bool OpenShadersOnDblClk;
 			bool ItemPropsOnDblCLk;
 			bool SelectItemOnDblClk;
+			bool Log;
+			bool StreamLogs;
+			bool PipeLogsToTerminal;
 			std::string StartUpTemplate;
-			bool CustomFont;
-			char Font[256];
+			char Font[MAX_PATH];
 			int FontSize;
 			bool AutoScale;
-			std::vector<std::string> GLSLExtensions;
+			std::vector<std::string> HLSLExtensions;
+			std::vector<std::string> VulkanGLSLExtensions;
 		} General;
 
 		struct strEditor {
 			bool SmartPredictions;
-			char Font[256];
+			char Font[MAX_PATH];
 			int FontSize;
-			bool ShowWhitespace;			// [TODO] Not implemented
+			bool ShowWhitespace;
 			bool HiglightCurrentLine;
 			bool LineNumbers;
 			bool StatusBar;
@@ -53,8 +58,8 @@ namespace ed
 		} Editor;
 
 		struct strPreview {
-			bool FXAA;
 			bool SwitchLeftRightClick;
+			bool HideMenuInPerformanceMode;
 			bool BoundingBox;
 			bool Gizmo;
 			bool GizmoRotationUI;
@@ -64,11 +69,16 @@ namespace ed
 			bool PropertyPick;
 			bool StatusBar;
 			int FPSLimit;
+			bool ApplyFPSLimitToApp; // apply FPSLimit to whole app, not only preview
+			bool LostFocusLimitFPS; // limit to 30FPS when app loses focus
+			int MSAA; // 1 (off), 2, 4, 8
 		} Preview;
 
 		struct strProject {
 			bool FPCamera;
-			ml::Color ClearColor;
+			bool UseAlphaChannel;
+			glm::vec4 ClearColor;
+			std::vector<std::string> IncludePaths;
 		} Project;
 
 		static inline Settings& Instance()
@@ -78,6 +88,6 @@ namespace ed
 		}
 
 	private:
-		void m_parseGLSLExt(const std::string& str);
+		void m_parseExt(const std::string& str, std::vector<std::string>& extcontainer);
 	};
 }

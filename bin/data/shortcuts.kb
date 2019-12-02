@@ -1,0 +1,36 @@
+CodeUI.Compile F5
+CodeUI.Save CTRL S
+CodeUI.SwitchView ALT F2
+CodeUI.ToggleStatusbar CTRL SHIFT F2
+Gizmo.Position CTRL G P
+Gizmo.Rotation CTRL G R
+Gizmo.Scale CTRL G S
+Preview.Delete Delete
+Preview.Duplicate SHIFT D
+Preview.IncreaseTime CTRL Right
+Preview.IncreaseTimeFast CTRL SHIFT Right
+Preview.SaveImage CTRL R
+Preview.SelectAll SHIFT A
+Preview.TogglePause Space
+Preview.ToggleStatusbar CTRL SHIFT F3
+Preview.Unselect CTRL SHIFT Delete
+Project.New CTRL N N
+Project.NewAudio CTRL N A
+Project.NewBuffer CTRL N B
+Project.NewCubeMap CTRL N C
+Project.NewRenderTexture CTRL N R
+Project.NewShaderPass CTRL N P
+Project.NewTexture CTRL N T
+Project.Open CTRL O
+Project.Rebuild CTRL F5
+Project.Save CTRL S
+Project.SaveAs CTRL P A
+Window.Exit ALT F4
+Workspace.HideEditor CTRL W E
+Workspace.HidePinned CTRL W N
+Workspace.HidePipeline CTRL W L
+Workspace.HidePreview CTRL W P
+Workspace.HideProperties CTRL W R
+Workspace.Options CTRL W O
+Workspace.PerformanceMode F
+Workspace.ToggleToolbar CTRL SHIFT F1

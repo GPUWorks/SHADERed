@@ -1,12 +1,11 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <utility>
 #include <unordered_map>
-#include <MoonLight/Base/Image.h>
-#include <MoonLight/Base/Texture.h>
-#include <MoonLight/Audio/AudioFile.h>
-#include <MoonLight/Audio/AudioPlayer.h>
-#include <MoonLight/Base/ShaderResourceView.h>
+#include <SDL2/SDL_surface.h>
+#include <SFML/Audio/Sound.hpp>
+#include <SFML/Audio/SoundBuffer.hpp>
 
 #include "PipelineItem.h"
 #include "ProjectParser.h"
@@ -18,15 +17,20 @@ namespace ed
 
 	struct RenderTextureObject
 	{
-		ml::RenderTexture* RT;
-		DirectX::XMINT2 FixedSize;
-		DirectX::XMFLOAT2 RatioSize;
-		ml::Color ClearColor;
+		GLuint DepthStencilBuffer, DepthStencilBufferMS, BufferMS; // ColorBuffer is stored in ObjectManager
+		glm::ivec2 FixedSize;
+		glm::vec2 RatioSize;
+		glm::vec4 ClearColor;
 		std::string Name;
+		bool Clear;
+		GLuint Format;
 
-		DirectX::XMINT2 CalculateSize(int w, int h)
+		RenderTextureObject() : FixedSize(-1, -1), RatioSize(1,1),
+		Clear(true), ClearColor(0,0,0,1), Format(GL_RGBA) { }
+
+		glm::ivec2 CalculateSize(int w, int h)
 		{
-			DirectX::XMINT2 rtSize = FixedSize;
+			glm::ivec2 rtSize = FixedSize;
 			if (rtSize.x == -1) {
 				rtSize.x = RatioSize.x * w;
 				rtSize.y = RatioSize.y * h;
@@ -36,70 +40,189 @@ namespace ed
 		}
 	};
 
+	struct BufferObject
+	{
+		int Size;
+		void* Data;
+		char ViewFormat[256]; // vec3;vec3;vec2
+		GLuint ID;
+	};
+
+	struct ImageObject
+	{
+		glm::ivec2 Size;
+		GLuint Format;
+		GLuint Texture;
+	};
+
+	struct Image3DObject
+	{
+		glm::ivec3 Size;
+		GLuint Format;
+		GLuint Texture;
+	};
+
+	/* Use this to remove all the maps */
+	class ObjectManagerItem
+	{
+	public:
+		ObjectManagerItem() {
+			ImageSize = glm::ivec2(0, 0);
+			Texture = 0;
+			IsCube = false;
+			CubemapPaths.clear();
+			SoundBuffer = nullptr;
+			Sound = nullptr;
+			SoundMuted = false;
+			RT = nullptr;
+			Buffer = nullptr;
+			Image = nullptr;
+			Image3D = nullptr;
+		}
+		~ObjectManagerItem() {
+			if (Buffer != nullptr) {
+				glDeleteBuffers(1, &Buffer->ID);
+				free(Buffer->Data);
+				delete Buffer;
+			}
+			else if (Image != nullptr) {
+				glDeleteTextures(1, &Image->Texture);
+				delete Image;
+			}
+			else if (Image3D != nullptr) {
+				glDeleteTextures(1, &Image3D->Texture);
+				delete Image3D;
+			}
+
+			if (RT != nullptr) {
+				glDeleteTextures(1, &RT->DepthStencilBuffer);
+				delete RT;
+			}
+			else if (Sound != nullptr) {
+				if (Sound->getStatus() == sf::Sound::Playing)
+					Sound->stop();
+
+				delete SoundBuffer;
+				delete Sound;
+			}
+
+
+			if (Texture != 0)
+				glDeleteTextures(1, &Texture);
+			CubemapPaths.clear();
+		}
+
+		glm::ivec2 ImageSize;
+		GLuint Texture;
+		bool IsCube;
+		std::vector<std::string> CubemapPaths;
+		
+		sf::SoundBuffer* SoundBuffer;
+		sf::Sound* Sound;
+		bool SoundMuted;
+
+		RenderTextureObject* RT;
+		BufferObject* Buffer;
+		ImageObject* Image;
+		Image3DObject* Image3D;
+	};
+
 	class ObjectManager
 	{
 	public:
-		ObjectManager(ml::Window* wnd, ProjectParser* parser, RenderEngine* rnd);
+		ObjectManager(ProjectParser* parser, RenderEngine* rnd);
 		~ObjectManager();
 
 		bool CreateRenderTexture(const std::string& name);
-		void CreateTexture(const std::string& file, bool cube = false);
+		bool CreateTexture(const std::string& file);
 		bool CreateAudio(const std::string& file);
+		bool CreateCubemap(const std::string& name, const std::string& left, const std::string& top, const std::string& front, const std::string& bottom, const std::string& right, const std::string& back);
+		bool CreateBuffer(const std::string& file);
+		bool CreateImage(const std::string& name, glm::ivec2 size = glm::ivec2(1, 1));
+		bool CreateImage3D(const std::string& name, glm::ivec3 size = glm::ivec3(1, 1, 1));
 
 		void Update(float delta);
 
-		void Bind(const std::string& file, PipelineItem* pass);
-		void Unbind(const std::string& file, PipelineItem* pass);
 		void Remove(const std::string& file);
-		int IsBound(const std::string& file, PipelineItem* pass);
+		
+		glm::ivec2 GetRenderTextureSize(const std::string& name);
+		RenderTextureObject* GetRenderTexture(GLuint tex);
+		bool IsRenderTexture(const std::string& name);
+		bool IsCubeMap(const std::string& name);
+		bool IsAudio(const std::string& name);
+		bool IsAudioMuted(const std::string& name);
+		bool IsBuffer(const std::string& name);
+		bool IsImage(const std::string& name);
+		bool IsImage3D(const std::string& name);
+		bool IsImage3D(GLuint id);
+		bool IsImage(GLuint id);
+		bool IsCubeMap(GLuint id);
 
-		DirectX::XMINT2 GetRenderTextureSize(const std::string& name);
-		inline RenderTextureObject* GetRenderTexture(const std::string& name) { return m_rts[name]; }
-		inline bool IsRenderTexture(const std::string& name) { return m_rts.count(name) > 0; }
-		inline bool IsAudio(const std::string& name) { return m_audioData.count(name) > 0; }
-		inline bool IsCubeMap(const std::string& name) { return m_isCube.count(name) > 0 && m_isCube[name]; }
-		inline bool IsLoading(const std::string& name) { return m_audioData.count(name) > 0 && (m_audioData[name]->IsLoading() || m_audioData[name]->HasFailed()); }
-		inline bool IsAudioMuted(const std::string& name) { return m_audioMute[name]; }
-
-		void Mute(const std::string& name);
-		void Unmute(const std::string& name);
-		void ResizeRenderTexture(const std::string& name, DirectX::XMINT2 size);
+		void ResizeRenderTexture(const std::string& name, glm::ivec2 size);
+		void ResizeImage(const std::string& name, glm::ivec2 size);
+		void ResizeImage3D(const std::string& name, glm::ivec3 size);
 
 		void Clear();
 
-		inline std::vector<std::string> GetObjects() { return m_items; }
-		inline ml::ShaderResourceView* GetSRV(const std::string& file) { return m_srvs[file]; }
-		inline ml::Image* GetImage(const std::string& file) { return m_imgs[file]; }
+		const std::vector<std::string>& GetObjects() { return m_items; }
+		GLuint GetTexture(const std::string& file);
+		glm::ivec2 GetTextureSize(const std::string& file);
+		sf::SoundBuffer* GetSoundBuffer(const std::string& file);
+		sf::Sound* GetAudioPlayer(const std::string& file);
+		BufferObject* GetBuffer(const std::string& name);
+		ImageObject* GetImage(const std::string& name);
+		Image3DObject* GetImage3D(const std::string& name);
+		RenderTextureObject* GetRenderTexture(const std::string& name);
+		glm::ivec2 GetImageSize(const std::string& name);
+		glm::ivec3 GetImage3DSize(const std::string& name);
 
-		inline std::vector<ml::ShaderResourceView*> GetBindList(PipelineItem* pass) {
+		std::string GetBufferNameByID(int id);
+		std::string GetImageNameByID(GLuint id);
+		std::string GetImage3DNameByID(GLuint id);
+		
+		void Mute(const std::string& name);
+		void Unmute(const std::string& name);
+
+		std::string GetItemNameByTextureID(GLuint texID);
+
+		std::vector<ed::ShaderVariable::ValueType> ParseBufferFormat(const std::string& str);
+
+		void Bind(const std::string& file, PipelineItem* pass);
+		void Unbind(const std::string& file, PipelineItem* pass);
+		int IsBound(const std::string& file, PipelineItem* pass);
+		inline std::vector<GLuint>& GetBindList(PipelineItem* pass) {
 			if (m_binds.count(pass) > 0) return m_binds[pass];
-			return std::vector<ml::ShaderResourceView*>();
+			return m_emptyResVec;
 		}
 
+		void BindUniform(const std::string& file, PipelineItem* pass);
+		void UnbindUniform(const std::string& file, PipelineItem* pass);
+		int IsUniformBound(const std::string& file, PipelineItem* pass);
+		inline std::vector<GLuint>& GetUniformBindList(PipelineItem* pass) {
+			if (m_uniformBinds.count(pass) > 0) return m_uniformBinds[pass];
+			return m_emptyResVec;
+		}
 
+		inline bool Exists(const std::string& name) { return std::count(m_items.begin(), m_items.end(), name) > 0; }
+
+		const std::vector<std::string>& GetCubemapTextures(const std::string& name);
+		inline std::vector<ObjectManagerItem*> GetItemDataList() { return m_itemData; }
 
 	private:
-		ml::Window* m_wnd;
 		RenderEngine* m_renderer;
 		ProjectParser* m_parser;
 
-		std::vector<std::string> m_items;
-		std::unordered_map<std::string, ml::Image*> m_imgs;
-		std::unordered_map<std::string, ml::Texture*> m_texs;
-		std::unordered_map<std::string, ml::ShaderResourceView*> m_srvs;
-		std::unordered_map<std::string, bool> m_isCube;
+		std::vector<std::string> m_items; // TODO: move item name to item data
+		std::vector<ObjectManagerItem*> m_itemData; 
 
-		std::unordered_map<std::string, RenderTextureObject*> m_rts;
+		std::vector<GLuint> m_emptyResVec;
+		std::vector<char> m_emptyResVecChar;
+		std::vector<std::string> m_emptyCBTexs;
 
-		ml::AudioEngine m_audioEngine;
 		ed::AudioAnalyzer m_audioAnalyzer;
 		float m_audioTempTexData[ed::AudioAnalyzer::SampleCount * 2];
 
-		std::unordered_map<std::string, ml::AudioFile*> m_audioData;
-		std::unordered_map<std::string, ml::AudioPlayer*> m_audioPlayer;
-		std::unordered_map<std::string, int> m_audioExclude; // how many loops have we played already
-		std::unordered_map<std::string, bool> m_audioMute;
-		
-		std::unordered_map<PipelineItem*, std::vector<ml::ShaderResourceView*>> m_binds;
+		std::unordered_map<PipelineItem*, std::vector<GLuint>> m_binds;
+		std::unordered_map<PipelineItem*, std::vector<GLuint>> m_uniformBinds;
 	};
 }

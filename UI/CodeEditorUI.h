@@ -1,13 +1,16 @@
 #pragma once
 #include "UIView.h"
 #include <ImGuiColorTextEdit/TextEditor.h>
+#include "../Objects/ShaderLanguage.h"
 #include "../Objects/PipelineItem.h"
 #include "../Objects/Settings.h"
-#include <imgui/examples/imgui_impl_win32.h>
-#include <imgui/examples/imgui_impl_dx11.h>
-#include <d3d11.h>
+#include "../Objects/Logger.h"
+#include <imgui/examples/imgui_impl_sdl.h>
+#include <imgui/examples/imgui_impl_opengl3.h>
 #include <deque>
 #include <future>
+#include <shared_mutex>
+#include <ghc/filesystem.hpp>
 
 namespace ed
 {
@@ -15,30 +18,42 @@ namespace ed
 	{
 	public:
 		CodeEditorUI(GUIManager* ui, ed::InterfaceManager* objects, const std::string& name = "", bool visible = false) : UIView(ui, objects, name, visible), m_selectedItem(-1) {
-			Settings& sets = Settings::Instance();
-			m_font = ImGui::GetIO().Fonts->AddFontFromFileTTF(Settings::Instance().Editor.Font, Settings::Instance().Editor.FontSize);
-			m_fontFilename = Settings::Instance().Editor.Font;
-			m_fontSize = Settings::Instance().Editor.FontSize;
+			Settings& sets = Settings::Instance(); // TODO: do this more often
+
+			if (ghc::filesystem::exists(sets.Editor.Font))
+				m_font = ImGui::GetIO().Fonts->AddFontFromFileTTF(sets.Editor.Font, sets.Editor.FontSize);
+			else {
+				m_font = ImGui::GetIO().Fonts->AddFontDefault();
+				Logger::Get().Log("Failed to load editor font", true);
+			}
+
+			m_fontFilename = sets.Editor.Font;
+			m_fontSize = sets.Editor.FontSize;
 			m_fontNeedsUpdate = false;
 			m_savePopupOpen = -1;
 			m_focusSID = 0;
 			m_focusWindow = false;
 			m_trackFileChanges = false;
 			m_trackThread = nullptr;
+			m_autoRecompileThread = nullptr;
+			m_autoRecompilerRunning = false;
+			m_autoRecompile = false;
 
 			m_setupShortcuts();
 		}
+		~CodeEditorUI();
 
-		virtual void OnEvent(const ml::Event& e);
+		virtual void OnEvent(const SDL_Event& e);
 		virtual void Update(float delta);
 
 		void SaveAll();
 
-		void OpenVS(PipelineItem item);
-		void OpenPS(PipelineItem item);
-		void OpenGS(PipelineItem item);
+		void OpenVS(PipelineItem* item);
+		void OpenPS(PipelineItem* item);
+		void OpenGS(PipelineItem* item);
+		void OpenCS(PipelineItem* item);
 
-		void RenameShaderPass(const std::string& name, const std::string& newName);
+		inline bool HasFocus() { return m_selectedItem != -1; }
 
 		inline void SetTheme(const TextEditor::Palette& colors) {
 			for (TextEditor& editor : m_editor)
@@ -55,6 +70,10 @@ namespace ed
 		inline void SetSmartIndent(bool ts) {
 			for (TextEditor& editor : m_editor)
 				editor.SetSmartIndent(ts);
+		}
+		inline void SetShowWhitespace(bool wh) {
+			for (TextEditor& editor : m_editor)
+				editor.SetShowWhitespaces(wh);
 		}
 		inline void SetHighlightLine(bool ts) {
 			for (TextEditor& editor : m_editor)
@@ -82,6 +101,8 @@ namespace ed
 			m_fontFilename = filename;
 			m_fontSize = size;
 		}
+		
+		// TODO: remove unused functions here
 		inline bool NeedsFontUpdate() const { return m_fontNeedsUpdate; }
 		inline std::pair<std::string, int> GetFont() { return std::make_pair(m_fontFilename, m_fontSize); }
 		inline void UpdateFont() { m_fontNeedsUpdate = false; m_font = ImGui::GetIO().Fonts->Fonts[1]; }
@@ -90,14 +111,21 @@ namespace ed
 				m_loadEditorShortcuts(&editor);
 		}
 
+		void SetAutoRecompile(bool autorecompile);
+		void UpdateAutoRecompileItems();
+
+
 		void SetTrackFileChanges(bool track);
-		inline bool TrackedFilesNeedUpdate() { return m_trackedShaderPasses.size() > 0; }
-		inline void EmptyTrackedFiles() { m_trackedShaderPasses.clear(); }
-		inline std::vector<std::string> TrackedFiles() { return m_trackedShaderPasses; }
+		inline bool TrackedFilesNeedUpdate() { return m_trackUpdatesNeeded > 0; }
+		inline void EmptyTrackedFiles() { m_trackUpdatesNeeded = 0; }
+		inline std::vector<bool> TrackedNeedsUpdate() { return m_trackedNeedsUpdate; }
 
 		void CloseAll();
+		void CloseAllFrom(PipelineItem* item);
 
 		std::vector<std::pair<std::string, int>> GetOpenedFiles();
+		std::vector<std::string> GetOpenedFilesData();
+		void SetOpenedFilesData(const std::vector<std::string>& data);
 
 
 	private:
@@ -119,7 +147,7 @@ namespace ed
 
 
 	private:
-		void m_open(PipelineItem item, int shaderTypeID);
+		void m_open(PipelineItem* item, int shaderTypeID); // TODO: add pointer to the pipelineitem
 		void m_setupShortcuts();
 
 		void m_loadEditorShortcuts(TextEditor* editor);
@@ -133,7 +161,7 @@ namespace ed
 		//void m_fetchStats(int id);
 		//void m_renderStats(int id);
 
-		std::vector<PipelineItem> m_items;
+		std::vector<PipelineItem*> m_items;
 		std::vector<TextEditor> m_editor;
 		std::vector<StatsPage> m_stats;
 		std::vector<int> m_shaderTypeId;
@@ -150,11 +178,43 @@ namespace ed
 
 		int m_selectedItem;
 
+		// auto recompile
+		std::thread* m_autoRecompileThread;
+		void m_autoRecompiler();
+		std::atomic<bool> m_autoRecompilerRunning, m_autoRecompileRequest;
+		std::vector<ed::MessageStack::Message> m_autoRecompileCachedMsgs;
+		bool m_autoRecompile;
+		std::shared_mutex m_autoRecompilerMutex;
+		struct AutoRecompilerItemInfo
+		{
+			AutoRecompilerItemInfo() {
+				VS = PS = GS = CS = "";
+				VS_SLang = PS_SLang = GS_SLang = CS_SLang = ShaderLanguage::GLSL;
+
+				SPass = nullptr;
+				CPass = nullptr;
+			}
+			std::string VS, PS, GS;
+			ShaderLanguage VS_SLang, PS_SLang, GS_SLang;
+			pipe::ShaderPass* SPass;
+
+			std::string CS;
+			ShaderLanguage CS_SLang;
+			pipe::ComputePass* CPass;
+
+			std::string AS;
+			pipe::AudioPass* APass;
+		};
+		std::unordered_map<std::string, AutoRecompilerItemInfo> m_ariiList;
+
 		// all the variables needed for the file change notifications
+		std::vector<bool> m_trackedNeedsUpdate;
+
 		bool m_trackFileChanges;
 		std::atomic<bool> m_trackerRunning;
+		std::atomic<int> m_trackUpdatesNeeded;
+		std::vector<std::string> m_trackIgnore;
 		std::thread* m_trackThread;
-		std::vector<std::string> m_trackedShaderPasses;
 		std::mutex m_trackFilesMutex;
 		void m_trackWorker();
 	};

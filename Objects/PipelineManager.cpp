@@ -1,14 +1,26 @@
 #include "PipelineManager.h"
 #include "ProjectParser.h"
+#include "Logger.h"
 #include "../Options.h"
-#include <MoonLight/Base/Topology.h>
-#include <MoonLight/Base/GeometryFactory.h>
+#include "SystemVariableManager.h"
+
+int strcmpcase(const char* s1, const char* s2)
+{
+	const unsigned char* p1 = (const unsigned char*)s1;
+	const unsigned char* p2 = (const unsigned char*)s2;
+	int result;
+	if (p1 == p2)
+		return 0;
+	while ((result = tolower(*p1) - tolower(*p2++)) == 0)
+		if (*p1++ == '\0')
+			break;
+	return result;
+}
 
 namespace ed
 {
-	PipelineManager::PipelineManager(ml::Window* wnd, ProjectParser* project)
+	PipelineManager::PipelineManager(ProjectParser* project)
 	{
-		m_wnd = wnd;
 		m_project = project;
 	}
 	PipelineManager::~PipelineManager()
@@ -17,14 +29,29 @@ namespace ed
 	}
 	void PipelineManager::Clear()
 	{
+		Logger::Get().Log("Clearing PipelineManager contents");
+
 		for (int i = 0; i < m_items.size(); i++) {
-			// delete pass' child items and their data
-			pipe::ShaderPass* pass = (pipe::ShaderPass*)m_items[i]->Data;
-			for (auto passItem : pass->Items) {
-				delete passItem->Data;
-				delete passItem;
+			if (m_items[i]->Type == PipelineItem::ItemType::ShaderPass) {
+				// delete pass' child items and their data
+				pipe::ShaderPass* pass = (pipe::ShaderPass*)m_items[i]->Data;
+				for (auto& passItem : pass->Items) {
+					if (passItem->Type == PipelineItem::ItemType::Geometry) {
+						pipe::GeometryItem* geo = (pipe::GeometryItem*)passItem->Data;
+						glDeleteVertexArrays(1, &geo->VAO);
+						glDeleteVertexArrays(1, &geo->VBO);
+					}
+
+					delete passItem->Data;
+					delete passItem;
+				}
+				pass->Items.clear();
+
+				glDeleteFramebuffers(1, &pass->FBO);
+			} else if (m_items[i]->Type == PipelineItem::ItemType::AudioPass) {
+				pipe::AudioPass* pass = (pipe::AudioPass*)m_items[i]->Data;
+				pass->Stream.stop();
 			}
-			pass->Items.clear();
 
 			// delete passes and their data
 			delete m_items[i]->Data;
@@ -35,71 +62,160 @@ namespace ed
 	bool PipelineManager::AddItem(const char * owner, const char * name, PipelineItem::ItemType type, void * data)
 	{
 		if (type == PipelineItem::ItemType::ShaderPass)
-			return AddPass(name, (pipe::ShaderPass*)data);
+			return AddShaderPass(name, (pipe::ShaderPass*)data);
+		else if (type == PipelineItem::ItemType::ComputePass)
+			return AddComputePass(name, (pipe::ComputePass*)data);
+		else if (type == PipelineItem::ItemType::AudioPass)
+			return AddAudioPass(name, (pipe::AudioPass*)data);
+		
+		Logger::Get().Log("Adding a pipeline item " + std::string(name) + " to the project");
 
-		for (auto item : m_items)
-			if (strcmp(item->Name, name) == 0)
+		for (const auto& item : m_items)
+			if (strcmpcase(item->Name, name) == 0) {
+				Logger::Get().Log("Item " + std::string(name) + " not added - name already taken", true);
 				return false;
+			}
 
-		for (auto item : m_items) {
+		m_project->ModifyProject();
+
+		for (auto& item : m_items) {
 			if (strcmp(item->Name, owner) != 0)
 				continue;
 
 			pipe::ShaderPass* pass = (pipe::ShaderPass*)item->Data;
 
 			for (auto& i : pass->Items)
-				if (strcmp(i->Name, name) == 0)
+				if (strcmpcase(i->Name, name) == 0) {
+					Logger::Get().Log("Item " + std::string(name) + " not added - name already taken", true);
 					return false;
+				}
 
-			pass->Items.push_back(new PipelineItem{ "\0", type, data });
+			pass->Items.push_back(new PipelineItem("\0", type, data));
 			strcpy(pass->Items.at(pass->Items.size() - 1)->Name, name);
 
+			Logger::Get().Log("Item " + std::string(name) + " added to the project");
+			
 			return true;
 		}
 
 		return false;
 	}
-	bool PipelineManager::AddPass(const char * name, pipe::ShaderPass* data)
+	bool PipelineManager::AddShaderPass(const char * name, pipe::ShaderPass* data)
 	{
-		for (auto& item : m_items)
-			if (strcmp(item->Name, name) == 0)
-				return false;
+		if (Has(name)) {
+			Logger::Get().Log("Shader pass " + std::string(name) + " not added - name already taken", true);
+			return false;
+		}
 
-		m_items.push_back(new PipelineItem{ "\0", PipelineItem::ItemType::ShaderPass, data });
+		m_project->ModifyProject();
+
+		Logger::Get().Log("Added a shader pass " + std::string(name) + " to the project");
+
+		m_items.push_back(new PipelineItem("\0", PipelineItem::ItemType::ShaderPass, data));
+		strcpy(m_items.at(m_items.size() - 1)->Name, name);
+
+		return true;
+	}
+	bool PipelineManager::AddComputePass(const char *name, pipe::ComputePass *data)
+	{
+		if (Has(name)) {
+			Logger::Get().Log("Compute pass " + std::string(name) + " not added - name already taken", true);
+			return false;
+		}
+
+		m_project->ModifyProject();
+
+		Logger::Get().Log("Added a compute pass " + std::string(name) + " to the project");
+
+		m_items.push_back(new PipelineItem("\0", PipelineItem::ItemType::ComputePass, data));
+		strcpy(m_items.at(m_items.size() - 1)->Name, name);
+
+		return true;
+	}
+	bool PipelineManager::AddAudioPass(const char *name, pipe::AudioPass *data)
+	{
+		if (Has(name)) {
+			Logger::Get().Log("Compute pass " + std::string(name) + " not added - name already taken", true);
+			return false;
+		}
+
+		m_project->ModifyProject();
+
+		Logger::Get().Log("Added a audio pass " + std::string(name) + " to the project");
+
+		m_items.push_back(new PipelineItem("\0", PipelineItem::ItemType::AudioPass, data));
 		strcpy(m_items.at(m_items.size() - 1)->Name, name);
 
 		return true;
 	}
 	void PipelineManager::Remove(const char* name)
 	{
+		Logger::Get().Log("Deleting item " + std::string(name));
+		
 		for (int i = 0; i < m_items.size(); i++)
 			if (strcmp(m_items[i]->Name, name) == 0) {
+				if (m_items[i]->Type == PipelineItem::ItemType::ShaderPass) {
+					pipe::ShaderPass* data = (pipe::ShaderPass*)m_items[i]->Data;
+					glDeleteFramebuffers(1, &data->FBO);
+
+					// TODO: add this part to m_freeShaderPass method
+					for (auto& passItem : data->Items) {
+						if (passItem->Type == PipelineItem::ItemType::Geometry) {
+							pipe::GeometryItem *geo = (pipe::GeometryItem *)passItem->Data;
+							glDeleteVertexArrays(1, &geo->VAO);
+							glDeleteVertexArrays(1, &geo->VBO);
+						}
+
+						delete passItem->Data;
+						delete passItem;
+					}
+					data->Items.clear();
+				}
+				else if (m_items[i]->Type == PipelineItem::ItemType::AudioPass) {
+					pipe::AudioPass* pass = (pipe::AudioPass*)m_items[i]->Data;
+					pass->Stream.stop();
+				}
+
 				delete m_items[i]->Data;
 				m_items[i]->Data = nullptr;
 				m_items.erase(m_items.begin() + i);
 				break;
 			} else {
-				pipe::ShaderPass* data = (pipe::ShaderPass*)m_items[i]->Data;
-				for (int j = 0; j < data->Items.size(); j++) {
-					if (strcmp(data->Items[j]->Name, name) == 0) {
-						delete data->Items[j]->Data;
-						data->Items[j]->Data = nullptr;
-						data->Items.erase(data->Items.begin() + j);
-						break;
+				if (m_items[i]->Type == PipelineItem::ItemType::ShaderPass) {
+					pipe::ShaderPass* data = (pipe::ShaderPass*)m_items[i]->Data;
+					for (int j = 0; j < data->Items.size(); j++) {
+						if (strcmp(data->Items[j]->Name, name) == 0) {
+							ed::PipelineItem* child = data->Items[j];
+							if (child->Type == PipelineItem::ItemType::Geometry) {
+								pipe::GeometryItem* geo = (pipe::GeometryItem*)child->Data;
+								glDeleteVertexArrays(1, &geo->VAO);
+								glDeleteVertexArrays(1, &geo->VBO);
+							}
+
+							delete data->Items[j]->Data;
+							data->Items[j]->Data = nullptr;
+							data->Items.erase(data->Items.begin() + j);
+							break;
+						}
 					}
 				}
 			}
+
+			
+		m_project->ModifyProject();
 	}
 	bool PipelineManager::Has(const char * name)
 	{
 		for (int i = 0; i < m_items.size(); i++) {
-			if (strcmp(m_items[i]->Name, name) == 0)
+			if (strcmpcase(m_items[i]->Name, name) == 0)
 				return true;
 			else {
-				pipe::ShaderPass* data = (pipe::ShaderPass*)m_items[i]->Data;
-				for (int j = 0; j < data->Items.size(); j++)
-					if (strcmp(data->Items[j]->Name, name) == 0)
-						return true;
+				if (m_items[i]->Type == PipelineItem::ItemType::ShaderPass) {
+					pipe::ShaderPass* data = (pipe::ShaderPass*)m_items[i]->Data;
+					for (int j = 0; j < data->Items.size(); j++)
+						if (strcmpcase(data->Items[j]->Name, name) == 0)
+							return true;
+				}
 			}
 		}
 		return false;
@@ -107,11 +223,11 @@ namespace ed
 	char* PipelineManager::GetItemOwner(const char* name)
 	{
 		for (int i = 0; i < m_items.size(); i++) {
-			pipe::ShaderPass* data = (pipe::ShaderPass*)m_items[i]->Data;
-			for (int j = 0; j < data->Items.size(); j++) {
-				if (strcmp(data->Items[j]->Name, name) == 0) {
-					return m_items[i]->Name;
-				}
+			if (m_items[i]->Type == PipelineItem::ItemType::ShaderPass) {
+				pipe::ShaderPass* data = (pipe::ShaderPass*)m_items[i]->Data;
+				for (int j = 0; j < data->Items.size(); j++)
+					if (strcmp(data->Items[j]->Name, name) == 0)
+						return m_items[i]->Name;
 			}
 		}
 		return nullptr;
@@ -122,21 +238,28 @@ namespace ed
 			if (strcmp(m_items[i]->Name, name) == 0)
 				return m_items[i];
 			else {
-				pipe::ShaderPass* data = (pipe::ShaderPass*)m_items[i]->Data;
-				for (int j = 0; j < data->Items.size(); j++)
-					if (strcmp(data->Items[j]->Name, name) == 0)
-						return data->Items[j];
+				if (m_items[i]->Type == PipelineItem::ItemType::ShaderPass) {
+					pipe::ShaderPass* data = (pipe::ShaderPass*)m_items[i]->Data;
+					for (int j = 0; j < data->Items.size(); j++)
+						if (strcmp(data->Items[j]->Name, name) == 0)
+							return data->Items[j];
+				}
 			}
 		}
 		return nullptr;
 	}
 	void PipelineManager::New(bool openTemplate)
 	{
+		Logger::Get().Log("Creating a new project from template");
+
 		Clear();
 
 		m_project->ResetProjectDirectory();
 
-		if (openTemplate)
+		if (openTemplate && m_project->GetTemplate() != "?empty")
 			m_project->OpenTemplate();
+		
+		// reset time, frame index, etc...
+		SystemVariableManager::Instance().Reset();
 	}
 }
